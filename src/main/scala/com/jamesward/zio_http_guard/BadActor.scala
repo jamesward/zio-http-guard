@@ -11,9 +11,9 @@ import java.time.Instant
  *
  * Each IP has a small ring of timestamps (capped at [[BadActor.banOnRequestCount]]).
  * A request marked `suspect = true` appends a timestamp; a request marked
- * `suspect = false` is always [[Status.Allowed]] and never modifies the ring.
+ * `suspect = false` is always [[BadActor.Status.Allowed]] and never modifies the ring.
  *
- * An IP is [[Status.Banned]] when the ring is full *and* the time between
+ * An IP is [[BadActor.Status.Banned]] when the ring is full *and* the time between
  * its oldest and newest timestamps fits inside [[BadActor.banWindow]] —
  * i.e. the IP made `banOnRequestCount` suspect requests within `banWindow`.
  *
@@ -32,7 +32,7 @@ final case class BadActor(
   /**
    * Record this request and return the resulting status.
    *
-   *   - `suspect = false` → always [[Status.Allowed]]; the ring is untouched.
+   *   - `suspect = false` → always [[BadActor.Status.Allowed]]; the ring is untouched.
    *   - `suspect = true`  → append the timestamp (drop oldest if full),
    *     then re-evaluate the window.
    *
