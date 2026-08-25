@@ -11,11 +11,12 @@ import zio.stream.ZStream
  *
  *   1. Extract a client IP from the request (default: last value of
  *      `X-Forwarded-For`, falling back to `request.remoteAddress`).
- *   2. Decide whether the request looks "suspect" (default: WordPress / PHP
- *      probing patterns in the path).
- *   3. Call [[BadActor.checkReq]]. If the IP is now banned, fail the request
- *      with a slow random-byte stream (a tarpit) so the attacker burns time
- *      reading garbage.
+ *   2. Decide whether the request looks "suspect" (default: common secret,
+ *      repository, dynamic-script, CMS, and debug-endpoint probe shapes).
+ *   3. Record suspect requests with [[BadActor.checkReq]]. A first-seen probe
+ *      is rejected immediately with a cheap `404`, before protected work runs.
+ *   4. Once the IP is banned, replace the `404` with a slow random-byte stream
+ *      (a tarpit) so the attacker burns time reading garbage.
  *
  * Apply with `routes @@ BadActorMiddleware()`.
  */
@@ -40,19 +41,52 @@ object BadActorMiddleware:
       .orElse(request.remoteAddress.map(_.getHostAddress))
 
   /**
-   * Default "suspect request" predicate. Flags common WordPress / PHP
-   * vulnerability-scanner shapes:
+   * Default "suspect request" predicate. Flags common security-exposure and
+   * vulnerability-scanner shapes that a JVM documentation service should
+   * never need to resolve upstream:
    *
-   *   - any path ending in `.php`
-   *   - any path containing `wp-includes`, `wp-admin`, or `wp-content`
+   *   - hidden files/directories such as `.env`, `.env.production`, `.git`,
+   *     `.ssh`, and `.npmrc`, wherever they occur in the path (`.well-known`
+   *     and `.nojekyll` remain allowed)
+   *   - a final segment containing a dynamic-script marker such as `.php`,
+   *     `.aspx`, `.jsp`, or `.cgi`, including backup suffixes
+   *   - WordPress path prefixes such as `wp-admin` and `wp-json`
+   *   - shallow deployment/build files and root framework/debug endpoints
    *
-   * This is the dominant signal for opportunistic scanning against a small
-   * Scala/JVM HTTP service. Override with your own predicate when serving
-   * paths that legitimately contain those substrings.
+   * Matching is case-insensitive and works on individual path segments, not
+   * only complete paths. Position/depth constraints avoid treating Maven
+   * group IDs such as `com.php` or nested javadoc files such as
+   * `Dockerfile.html` as probes. Override the predicate when a service
+   * intentionally exposes another matching shape.
    */
+  private val dynamicScriptMarkers = Set(".php", ".asp", ".aspx", ".jsp", ".jspx", ".cgi")
+  private val exposedFileNames = Set(
+    "gemfile",
+    "jenkinsfile",
+    "laravel.log",
+    "pipfile",
+    "procfile",
+  )
+  private val frameworkProbePrefixes = Set("__debug", "__nextjs")
+  private val serverProbeSegments = Set("actuator", "cgi-bin", "server-info", "server-status")
+  private val wordpressSegments = Set("wp-admin", "wp-config", "wp-content", "wp-includes", "wp-json")
+
+  private def allowedDotSegment(segment: String, index: Int): Boolean =
+    (index == 0 && segment == ".well-known") || segment == ".nojekyll"
+
   val defaultSuspect: Request => Boolean = req =>
-    val s = req.path.toString
-    s.endsWith(".php") || s.contains("wp-includes") || s.contains("wp-admin") || s.contains("wp-content")
+    val segments = req.path.segments.map(_.toLowerCase(java.util.Locale.ROOT))
+    val lastSegment = segments.lastOption
+    segments.zipWithIndex.exists((segment, index) =>
+      segment.startsWith(".") && !allowedDotSegment(segment, index)
+    ) ||
+      lastSegment.exists(segment => dynamicScriptMarkers.exists(segment.contains)) ||
+      segments.exists(wordpressSegments.contains) ||
+      segments.headOption.exists(_.startsWith("wordpress")) ||
+      (segments.length <= 3 && lastSegment.exists(exposedFileNames.contains)) ||
+      (segments.length <= 3 && lastSegment.exists(segment => segment.startsWith("dockerfile") && !segment.endsWith(".html"))) ||
+      segments.headOption.exists(segment => frameworkProbePrefixes.exists(segment.startsWith)) ||
+      segments.headOption.exists(serverProbeSegments.contains)
 
   /**
    * 30-second stream of 1KB random-byte chunks emitted at 10 chunks/sec.
@@ -84,7 +118,8 @@ object BadActorMiddleware:
    *
    * @param suspect        predicate that decides whether a request should
    *                       count toward the ban window. Defaults to
-   *                       [[defaultSuspect]].
+   *                       [[defaultSuspect]]. Suspect requests are rejected
+   *                       immediately, before the protected handler runs.
    * @param bannedResponse response served to a banned IP. Defaults to
    *                       [[gibberishResponse]].
    * @param extractIp      how to derive the client IP from a request.
@@ -93,11 +128,16 @@ object BadActorMiddleware:
    *                       `400 Bad Request` — there is no IP to track, so
    *                       letting it through would silently bypass the
    *                       guard.
+   * @param suspectResponse response served to a suspect request before its
+   *                        IP reaches the ban threshold. Defaults to a cheap
+   *                        `404 Not Found`, avoiding protected work without
+   *                        advertising the guard.
    */
   def apply(
     suspect: Request => Boolean = defaultSuspect,
     bannedResponse: => Response = gibberishResponse,
     extractIp: Request => Option[BadActor.IP] = forwardedFor,
+    suspectResponse: => Response = Response.status(Status.NotFound),
   ): HandlerAspect[BadActor, Unit] =
     HandlerAspect.interceptIncomingHandler:
       Handler.fromFunctionZIO[Request]: request =>
@@ -110,6 +150,8 @@ object BadActorMiddleware:
               val now = Clock.instant.run
               val status = ZIO.serviceWithZIO[BadActor](_.checkReq(ip, now, isSuspect)).run
               status match
+                case BadActor.Status.Allowed if isSuspect =>
+                  ZIO.fail(suspectResponse).run
                 case BadActor.Status.Allowed =>
                   request -> ()
                 case BadActor.Status.Banned =>

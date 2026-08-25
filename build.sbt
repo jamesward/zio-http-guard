@@ -18,7 +18,7 @@ libraryDependencies ++= Seq(
   "dev.zio" %% "zio"                 % zioVersion,
   "dev.zio" %% "zio-concurrent"      % zioVersion,
   "dev.zio" %% "zio-direct"          % "1.0.0-RC7",
-  "dev.zio" %% "zio-http"            % "3.11.3",
+  "dev.zio" %% "zio-http"            % "3.11.4",
 
   "dev.zio" %% "zio-test"           % zioVersion % Test,
   "dev.zio" %% "zio-test-sbt"       % zioVersion % Test,
@@ -35,16 +35,16 @@ javaOptions ++= Seq(
   "--sun-misc-unsafe-memory-access=allow",
 )
 
-licenses := Seq("MIT License" -> url("https://opensource.org/licenses/MIT"))
+licenses := Seq("MIT License" -> uri("https://opensource.org/licenses/MIT"))
 
-homepage := Some(url("https://github.com/jamesward/zio-http-guard"))
+homepage := Some(uri("https://github.com/jamesward/zio-http-guard"))
 
 developers := List(
   Developer(
     "jamesward",
     "James Ward",
     "james@jamesward.com",
-    url("https://jamesward.com")
+    uri("https://jamesward.com")
   )
 )
 
