@@ -2,7 +2,7 @@ organization := "com.jamesward"
 
 name := "zio-http-guard"
 
-scalaVersion := "3.10.0"
+scalaVersion := "3.9.0"
 
 scalacOptions ++= Seq(
   // "-Yexplicit-nulls", // not sure where it went
@@ -53,4 +53,4 @@ ThisBuild / versionScheme := Some("semver-spec")
 // SkillsJars: extract agent Skills with `./sbta extractSkillsJars`
 skillsJarsOutputDir := Some(file(".kiro/skills"))
 
-libraryDependencies += "com.jamesward" % "skills" % "0.0.18" % Skills
+libraryDependencies += "com.jamesward" % "skills" % "0.0.21" % Skills
