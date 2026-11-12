@@ -45,11 +45,53 @@ object Swarm:
       )
 
 /**
+ * Who a client is for rate limiting: a declared crawler by its User-Agent
+ * token, so one budget covers all of its IPs (crawlers rotate through many,
+ * e.g. `meta-externalagent` used 56 addresses in 3.5 minutes), and anyone
+ * else by IP.
+ */
+opaque type ClientKey = String
+object ClientKey:
+  def apply(key: String): ClientKey = key
+  extension (key: ClientKey) def value: String = key
+  given CanEqual[ClientKey, ClientKey] = CanEqual.derived
+
+  /** Every client by IP. */
+  val ip: (Request, ClientIp) => ClientKey = (_, client) => client.value
+
+  /** A declared crawler (see [[Crawler.identify]]) as `crawler:<token>`, anyone else by IP. */
+  def crawlerOrIp(known: Set[String] = Crawler.known): (Request, ClientIp) => ClientKey =
+    (request, client) => Crawler.identify(request, known).fold(client.value)(token => s"crawler:$token")
+
+/** Crawlers that name themselves in their User-Agent. */
+object Crawler:
+  /**
+   * Lower-case User-Agent tokens of crawlers that walk whole sites: search
+   * engines, SEO tools and AI crawlers. Anyone can send these, so a crawler
+   * budget keyed by them can be spent by an impostor; the alternative, keying
+   * by IP, gives a crawler that rotates addresses no limit at all.
+   */
+  val known: Set[String] = Set(
+    "googlebot", "bingbot", "applebot", "yandexbot", "baiduspider", "seznambot", "petalbot",
+    "duckduckbot", "meta-externalagent", "facebookexternalhit", "amazonbot", "bytespider",
+    "gptbot", "oai-searchbot", "claudebot", "perplexitybot", "ccbot",
+    "semrushbot", "ahrefsbot", "dotbot", "mj12bot", "dataforseobot", "serankingbacklinksbot", "shapbot",
+  )
+
+  /** The first `known` token the User-Agent contains (case-insensitive), if any. */
+  def identify(request: Request, known: Set[String] = known): Option[String] =
+    request.headers.get(Header.UserAgent.name).flatMap: ua =>
+      val lower = ua.toLowerCase(Locale.ROOT)
+      known.find(lower.contains)
+
+/**
  * A per-client limit on how many *costly* keys (e.g. GAVs not cached yet)
- * a client may request per window. Requests over the limit are
- * [[Tier.Confirmed]] with a `429` + `Retry-After` response. Settings:
- * `<PREFIX>_NEW_KEYS_PER_CLIENT` (default 30), `<PREFIX>_NEW_KEYS_WINDOW`
- * (default 10m).
+ * a client may request per window. Requests over the limit get a `429` +
+ * `Retry-After` ([[Tier.Confirmed]], but without flagging the client, so its
+ * other requests still pass). Who counts as one client is `clientKey`: by
+ * default the IP; [[ClientKey.crawlerOrIp]] gives each declared crawler one
+ * budget across all its IPs. Settings: `<PREFIX>_NEW_KEYS_PER_CLIENT`
+ * (default 30), `<PREFIX>_NEW_KEYS_WINDOW` (default 10m).
  */
 object NewKeyPerClient:
   val name: DetectorName = DetectorName("new-key")
@@ -62,27 +104,35 @@ object NewKeyPerClient:
       Config.duration(s"${prefix}_NEW_KEYS_WINDOW").withDefault(defaults.window)).map(Settings(_, _))
 
   /**
-   * @param key      the resource a request would cost, or `None` if it's free.
-   * @param isCostly whether that key is costly right now (e.g. not in the cache).
+   * @param key       the resource a request would cost, or `None` if it's free.
+   * @param isCostly  whether that key is costly right now (e.g. not in the cache).
+   * @param clientKey who shares a budget (default: the IP).
    */
-  def make[K](settings: Settings, key: Request => Option[K], isCostly: K => UIO[Boolean]): ZIO[Scope, Nothing, Detector] =
+  def make[K](
+    settings: Settings,
+    key: Request => Option[K],
+    isCostly: K => UIO[Boolean],
+    clientKey: (Request, ClientIp) => ClientKey = ClientKey.ip,
+  ): ZIO[Scope, Nothing, Detector] =
     val limited = Response(
       Status.TooManyRequests,
       Headers(Header.RetryAfter.ByDuration(settings.window.dividedBy(2))),
       Body.fromString("Too many new resources requested; try again later."),
     )
     defer:
-      val recent = ConcurrentMap.empty[ClientIp, Ref[Chunk[Instant]]].run
+      val recent = ConcurrentMap.empty[ClientKey, Ref[Chunk[Instant]]].run
       sweep(recent, settings.window).repeat(Schedule.spaced(1.minute)).forkScoped.run
       Detector(name, (request, client) =>
         ZIO.foreach(key(request)): k =>
           isCostly(k).flatMap:
             case false => ZIO.none
-            case true  => tryNew(recent, settings, client).map(allowed => Option.unless(allowed)(Verdict(Tier.Confirmed, reason, Some(limited))))
+            case true  =>
+              tryNew(recent, settings, clientKey(request, client)).map: allowed =>
+                Option.unless(allowed)(Verdict(Tier.Confirmed, reason, Some(limited), flag = false))
         .map(_.flatten)
       )
 
-  private type Recent = ConcurrentMap[ClientIp, Ref[Chunk[Instant]]]
+  private type Recent = ConcurrentMap[ClientKey, Ref[Chunk[Instant]]]
 
   private def sweep(recent: Recent, window: Duration): UIO[Unit] =
     Clock.instant.flatMap: now =>
@@ -91,7 +141,7 @@ object NewKeyPerClient:
           ref.get.flatMap(times => recent.remove(client, ref).when(times.forall(!isRecent(_, now, window))))
 
   /** True if the client is under the limit, recording this request. */
-  private def tryNew(recent: Recent, settings: Settings, client: ClientIp): UIO[Boolean] =
+  private def tryNew(recent: Recent, settings: Settings, client: ClientKey): UIO[Boolean] =
     defer:
       val now   = Clock.instant.run
       val fresh = Ref.make(Chunk.empty[Instant]).run

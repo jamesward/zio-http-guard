@@ -131,6 +131,26 @@ object GuardSpec extends ZIOSpecDefault:
               other.isEmpty,
               later.isEmpty,
             )
+      ,
+      test("new keys per crawler: one budget across a crawler's IPs, anyone else by IP"):
+        ZIO.scoped:
+          defer:
+            val meta = "Mozilla/5.0 (compatible; meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler))"
+            val detector = NewKeyPerClient.make[String](NewKeyPerClient.Settings(2, 10.minutes), r => Some(r.path.encode), _ => ZIO.succeed(true),
+              ClientKey.crawlerOrIp()).run
+            val first   = detector.check(get("/a", "57.141.0.1", "User-Agent" -> meta), ClientIp("57.141.0.1")).run
+            val second  = detector.check(get("/b", "57.141.0.2", "User-Agent" -> meta), ClientIp("57.141.0.2")).run
+            val third   = detector.check(get("/c", "57.141.0.3", "User-Agent" -> meta), ClientIp("57.141.0.3")).run
+            val browser = ZIO.foreach(List("/d", "/e"))(verdictFor(detector, _, "57.141.0.3")).run
+            assertTrue(
+              first.isEmpty,
+              second.isEmpty,
+              third.flatMap(_.response).map(_.status) == Some(Status.TooManyRequests),
+              third.exists(!_.flag),
+              browser.forall(_.isEmpty),
+              Crawler.identify(get("/", "1.1.1.1", "User-Agent" -> "Mozilla/5.0 (compatible; Googlebot/2.1)")) == Some("googlebot"),
+              Crawler.identify(get("/", "1.1.1.1", "User-Agent" -> chrome156)).isEmpty,
+            )
     ),
     suite("guard")(
       test("confirmed requests are blocked and the client stays flagged; observe mode only records"):
@@ -163,9 +183,16 @@ object GuardSpec extends ZIOSpecDefault:
             val routes = ok @@ guard.middleware
             routes.runZIO(get("/a", "1.1.1.1")).run
             val limited = routes.runZIO(get("/b", "1.1.1.1")).run
+            // A rate limit doesn't flag the client: its free requests still pass.
+            val freeLimit = NewKeyPerClient.make[String](NewKeyPerClient.Settings(1, 10.minutes), r => Option.unless(r.path.encode == "/cached")(r.path.encode), _ => ZIO.succeed(true)).run
+            val free = Guard.make(GuardConfig(), Chunk(freeLimit)).run
+            val freeRoutes = ok @@ free.middleware
+            freeRoutes.runZIO(get("/a", "3.3.3.3")).run
+            freeRoutes.runZIO(get("/b", "3.3.3.3")).run
+            val cached = text(freeRoutes, get("/cached", "3.3.3.3")).run
             val off = Guard.make(GuardConfig(disabledDetectors = Set(Probe.pathName)), Chunk(Probe.path())).run
             val passed = text((ok @@ off.middleware), get("/947870aad14388ee.mkv", "2.2.2.2")).run
-            assertTrue(limited.status == Status.TooManyRequests, passed == "real")
+            assertTrue(limited.status == Status.TooManyRequests, passed == "real", cached == "real")
       ,
       test("fromEnvironment applies the guard provided as a layer"):
         ZIO.scoped:

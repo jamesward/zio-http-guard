@@ -12,7 +12,7 @@ import java.time.Instant
  * Runs every enabled [[Detector]] on each request, takes the highest
  * [[Tier]] any of them returns, and applies the [[Action]] for that tier.
  * A client with a [[Tier.Confirmed]] verdict stays Confirmed (`flagged`)
- * for `flagFor`.
+ * for `flagFor`, unless the verdict is a rate limit ([[Verdict.flag]] false).
  *
  * The consuming app owns the detectors and their keys, plus `actionFor`
  * overrides (e.g. bulkhead only expensive routes); [[GuardConfig]]
@@ -52,7 +52,7 @@ final case class Guard(
       val verdicts = ZIO.foreach(enabled)(_.check(request, client)).run.flatten
       val previous = flaggedVerdict(client, now).run
       val verdict  = (verdicts ++ previous).maxByOption(_.tier)
-      flag(client, now).when(verdicts.exists(_.tier == Tier.Confirmed)).run
+      flag(client, now).when(verdicts.exists(v => v.tier == Tier.Confirmed && v.flag)).run
       stats.record(request, client, verdict).run
       verdict
 

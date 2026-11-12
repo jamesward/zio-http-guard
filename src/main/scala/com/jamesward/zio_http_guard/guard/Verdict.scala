@@ -19,8 +19,12 @@ object Tier:
  * @param response used instead of the configured block response when this
  *                 verdict's request is blocked (e.g. a `429` with
  *                 `Retry-After` for a rate limit).
+ * @param flag     whether a [[Tier.Confirmed]] verdict flags the client, so
+ *                 its later requests are Confirmed too. A rate limit sets it
+ *                 to false: only the requests over the limit are refused, and
+ *                 the client's other requests (e.g. cached pages) still pass.
  */
-final case class Verdict(tier: Tier, reason: Reason, response: Option[Response] = None)
+final case class Verdict(tier: Tier, reason: Reason, response: Option[Response] = None, flag: Boolean = true)
 
 /**
  * Judges a request. A detector may keep state (the swarm and new-key

@@ -7,7 +7,7 @@ Guard middleware for [zio-http](https://github.com/zio/zio-http): identify flood
 
 ## Guard
 
-`com.jamesward.zio_http_guard.guard.Guard` runs a list of **detectors** on each request. Each detector may return a **verdict** (`Regular`, `Suspect` or `Confirmed`, plus a reason). The guard takes the highest tier and applies that tier's **action**: `pass`, `block`, or `bulkhead:<pool>` (a [rezilience](https://github.com/svroonland/rezilience) bulkhead that sheds with a `503` when full). A client with a `Confirmed` verdict stays `Confirmed` for `GUARD_FLAG_FOR`.
+`com.jamesward.zio_http_guard.guard.Guard` runs a list of **detectors** on each request. Each detector may return a **verdict** (`Regular`, `Suspect` or `Confirmed`, plus a reason). The guard takes the highest tier and applies that tier's **action**: `pass`, `block`, or `bulkhead:<pool>` (a [rezilience](https://github.com/svroonland/rezilience) bulkhead that sheds with a `503` when full). A client with a `Confirmed` verdict stays `Confirmed` for `GUARD_FLAG_FOR`, unless the verdict is a rate limit (`Verdict.flag = false`).
 
 The app owns the detectors and what they key on; thresholds, actions and the mode are environment variables, so a new kind of flood is handled by changing the app or its config, not this library.
 
@@ -34,7 +34,7 @@ routes @@ Middleware.requestLogging(loggedRequestHeaders = ClientId.identifyingH
 | Detector | Verdict |
 |---|---|
 | `Swarm.make(settings, key)` | `Confirmed` once `GUARD_SWARM_CLIENTS` distinct clients request the same key within `GUARD_SWARM_WINDOW` |
-| `NewKeyPerClient.make(settings, key, isCostly)` | `Confirmed` with a `429` once a client requests more than `GUARD_NEW_KEYS_PER_CLIENT` costly keys within `GUARD_NEW_KEYS_WINDOW` |
+| `NewKeyPerClient.make(settings, key, isCostly, clientKey)` | A `429` once a client requests more than `GUARD_NEW_KEYS_PER_CLIENT` costly keys within `GUARD_NEW_KEYS_WINDOW`. A rate limit doesn't flag the client, so its other requests still pass. `clientKey` decides who shares a budget: `ClientKey.ip` (default) or `ClientKey.crawlerOrIp()`, which gives each declared crawler (`Crawler.known` User-Agent tokens) one budget across all its IPs |
 | `Probe.path()` / `Probe.referer()` | `Confirmed` for a probe path (default: root-level random-hex media files), or a `Referer` that is one |
 | `ClientHints.detector` | `Confirmed` when `Sec-CH-UA` contradicts a Chrome User-Agent; `Suspect` when it's missing |
 | `Detector(name, check)` / `Detector.pure(name)(f)` | anything the app needs |
