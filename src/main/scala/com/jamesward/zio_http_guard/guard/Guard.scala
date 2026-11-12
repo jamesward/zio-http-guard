@@ -72,6 +72,12 @@ final case class Guard(
         bulkheads.get(pool).fold(ZIO.logWarning(s"guard: undefined bulkhead ${pool.value}; passing") *> handle): bulkhead =>
           bulkhead(handle).catchAll(_.fold(stats.shed(pool) *> ZIO.fail(GuardConfig.shedResponse), ZIO.fail(_)))
 
+  /** Applies the guard to one request; `handle` runs the request (unless the guard blocks it). */
+  def apply[R](request: Request, handle: ZIO[R, Response, Response]): ZIO[R, Response, Response] =
+    (config.mode, ClientId.forwardedFor(config.trustedHops)(request)) match
+      case (GuardConfig.Mode.Off, _) | (_, None) => handle
+      case (_, Some(client))                     => guarded(request, client, handle)
+
   private def guarded[R](request: Request, client: ClientIp, handle: ZIO[R, Response, Response]): ZIO[R, Response, Response] =
     judge(request, client).flatMap: verdict =>
       val tier = verdict.fold(Tier.Regular)(_.tier)
@@ -92,12 +98,21 @@ final case class Guard(
       def apply[Env1, Err](routes: Routes[Env1, Err]): Routes[Env1, Err] =
         routes.transform[Env1]: handler =>
           Handler.scoped[Env1]:
-            Handler.fromFunctionZIO[Request]: request =>
-              (config.mode, ClientId.forwardedFor(config.trustedHops)(request)) match
-                case (GuardConfig.Mode.Off, _) | (_, None) => handler(request)
-                case (_, Some(client))                     => guarded(request, client, handler(request))
+            Handler.fromFunctionZIO[Request](request => Guard.this(request, handler(request)))
 
 object Guard:
+
+  /**
+   * Like [[Guard.middleware]], but takes the guard from the environment, so
+   * routes can stay a `val` with `Guard` in their environment and the guard
+   * is provided as a layer alongside everything else.
+   */
+  val fromEnvironment: Middleware[Guard] =
+    new Middleware[Guard]:
+      def apply[Env1 <: Guard, Err](routes: Routes[Env1, Err]): Routes[Env1, Err] =
+        routes.transform[Env1]: handler =>
+          Handler.scoped[Env1]:
+            Handler.fromFunctionZIO[Request](request => ZIO.serviceWithZIO[Guard](_(request, handler(request))))
 
   /**
    * Builds a guard from `config`, starting its bulkheads, the flag sweeper

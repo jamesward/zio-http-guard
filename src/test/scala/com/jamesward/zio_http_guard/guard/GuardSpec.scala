@@ -167,6 +167,16 @@ object GuardSpec extends ZIOSpecDefault:
             val passed = text((ok @@ off.middleware), get("/947870aad14388ee.mkv", "2.2.2.2")).run
             assertTrue(limited.status == Status.TooManyRequests, passed == "real")
       ,
+      test("fromEnvironment applies the guard provided as a layer"):
+        ZIO.scoped:
+          defer:
+            val guard   = Guard.make(GuardConfig(), Chunk(Probe.path())).run
+            val routes  = ok @@ Guard.fromEnvironment
+            val blocked = routes.runZIO(get("/947870aad14388ee.mkv", "1.1.1.1")).provideSomeEnvironment[Scope](_.add(guard)).run
+            val passed  = routes.runZIO(get("/listfiles/a/b", "2.2.2.2")).provideSomeEnvironment[Scope](_.add(guard)).flatMap(_.body.asString).run
+            val body    = blocked.body.asString.run
+            assertTrue(body.isEmpty, passed == "real")
+      ,
       test("a full bulkhead sheds with 503 while other tiers pass"):
         ZIO.scoped:
           defer:
@@ -181,7 +191,8 @@ object GuardSpec extends ZIOSpecDefault:
             val guard  = Guard.make(config, Chunk(suspect)).run
             val routes = slow @@ guard.middleware
             val held   = routes.runZIO(get("/x", "1.1.1.1", "User-Agent" -> "bot")).fork.run
-            ZIO.yieldNow.repeatN(200).run
+            // Wait until the held request occupies the pool's only slot.
+            guard.bulkheads(PoolName("suspect")).metrics.repeatUntil(_.inFlight == 1).run
             val shed    = routes.runZIO(get("/x", "2.2.2.2", "User-Agent" -> "bot")).run
             val regular = routes.runZIO(get("/x", "3.3.3.3")).fork.run
             gate.succeed(()).run
@@ -189,4 +200,4 @@ object GuardSpec extends ZIOSpecDefault:
             val regularBody = text(regular).run
             assertTrue(shed.status == Status.ServiceUnavailable, heldBody == "real", regularBody == "real")
     ),
-  )
+  ) @@ TestAspect.timeout(30.seconds)

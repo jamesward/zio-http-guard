@@ -24,6 +24,9 @@ val guardLayer: ZLayer[Any, Config.Error, Guard] =
 
 // Apply outside the request logger so its lines carry client_ip / guard_tier / guard_reason.
 routes @@ Middleware.requestLogging(loggedRequestHeaders = ClientId.identifyingHeaders) @@ guard.middleware
+
+// Or take the guard from the environment and provide `guardLayer` with your other layers:
+routes @@ Middleware.requestLogging(loggedRequestHeaders = ClientId.identifyingHeaders) @@ Guard.fromEnvironment
 ```
 
 ### Detectors
