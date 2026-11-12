@@ -19,6 +19,9 @@ libraryDependencies ++= Seq(
   "dev.zio" %% "zio-concurrent"      % zioVersion,
   "dev.zio" %% "zio-direct"          % "1.0.0-RC7",
   "dev.zio" %% "zio-http"            % "3.11.6",
+  // Same version zio-mavencentral is built against: rezilience minor
+  // releases aren't binary compatible.
+  "nl.vroste" %% "rezilience"        % "0.10.6",
 
   "dev.zio" %% "zio-test"           % zioVersion % Test,
   "dev.zio" %% "zio-test-sbt"       % zioVersion % Test,

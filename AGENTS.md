@@ -1,6 +1,6 @@
 # AGENTS.md: zio-http-guard
 
-zio-http-guard is a ZIO HTTP library of guard middleware (bad-actor banning, crawler limiting).
+zio-http-guard is a ZIO HTTP library of guard middleware: the configurable `guard` package (detectors, tiers, actions, env-var config, `guard_stats`), plus the older bad-actor banning and crawler limiting.
 
 ## Agent tooling
 
@@ -15,3 +15,4 @@ zio-http-guard is a ZIO HTTP library of guard middleware (bad-actor banning, cra
 - Full validation: `Test / compile; testFull` (no `stage`: this is a library).
 - Exception: `dev.zio:zio-direct` 1.0.0-RC7 is a prerelease because no stable release exists.
 - `-release 17` targets Java 17 bytecode; CI builds on Java 25.
+- rezilience stays on the version zio-mavencentral is built against: its minor releases aren't binary compatible.
