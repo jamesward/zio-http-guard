@@ -153,7 +153,7 @@ object GuardSpec extends ZIOSpecDefault:
             )
     ),
     suite("guard")(
-      test("confirmed requests are blocked and the client stays flagged; observe mode only records"):
+      test("a probe gets a 404, the client stays flagged; observe mode only records"):
         ZIO.scoped:
           defer:
             val enforce = Guard.make(GuardConfig(), Chunk(Probe.path())).run
@@ -167,7 +167,7 @@ object GuardSpec extends ZIOSpecDefault:
             val watched = text((ok @@ observe.middleware), get("/947870aad14388ee.mkv", "3.3.3.3")).run
             val verdict = observe.judge(get("/947870aad14388ee.mkv", "3.3.3.3"), ClientIp("3.3.3.3")).run
             assertTrue(
-              probe.status == Status.Ok,
+              probe.status == Status.NotFound,
               after.isEmpty,
               other == "real",
               expired == "real",

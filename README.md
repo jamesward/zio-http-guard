@@ -35,7 +35,7 @@ routes @@ Middleware.requestLogging(loggedRequestHeaders = ClientId.identifyingH
 |---|---|
 | `Swarm.make(settings, key)` | `Confirmed` once `GUARD_SWARM_CLIENTS` distinct clients request the same key within `GUARD_SWARM_WINDOW` |
 | `NewKeyPerClient.make(settings, key, isCostly, clientKey)` | A `429` once a client requests more than `GUARD_NEW_KEYS_PER_CLIENT` costly keys within `GUARD_NEW_KEYS_WINDOW`. A rate limit doesn't flag the client, so its other requests still pass. `clientKey` decides who shares a budget: `ClientKey.ip` (default) or `ClientKey.crawlerOrIp()`, which gives each declared crawler (`Crawler.known` User-Agent tokens) one budget across all its IPs |
-| `Probe.path()` / `Probe.referer()` | `Confirmed` for a probe path (default: root-level random-hex media files), or a `Referer` that is one |
+| `Probe.path(isProbe, response)` / `Probe.referer(isProbe)` | `Confirmed` for a probe path, or a `Referer` that is one. `isProbe` defaults to `Probe.randomMedia` (root-level random-hex media files); `Probe.suspectPath` matches secret, repository, script, CMS and debug-endpoint probes (`/.env`, `/.git/config`, `*.php`, `/wp-admin`, `/actuator`). Combine them with `p => Probe.randomMedia(p) \|\| Probe.suspectPath(p)`. A blocked probe path gets a `404` (`response = None` uses `GUARD_BLOCK_RESPONSE`) |
 | `ClientHints.detector` | `Confirmed` when `Sec-CH-UA` contradicts a Chrome User-Agent; `Suspect` when it's missing |
 | `Detector(name, check)` / `Detector.pure(name)(f)` | anything the app needs |
 
@@ -72,8 +72,3 @@ Pass a different prefix (`GuardConfig.config("WEBJARS_GUARD")`) to run more than
 - `ClientId.identifyingHeaders` for `Middleware.requestLogging`, and `ClientId.annotate()` to put `client_ip` on every log line of routes the guard doesn't wrap.
 
 All state is bounded and swept.
-
-## Also
-
-- `BadActorMiddleware` / `BadActor`: bans IPs that make repeated probe requests.
-- `CrawlerLimiter`: one resource key at a time per known crawler User-Agent.

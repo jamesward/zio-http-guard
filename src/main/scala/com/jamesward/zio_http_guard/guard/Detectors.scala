@@ -151,28 +151,6 @@ object NewKeyPerClient:
         if live.size < settings.perClient then (true, live :+ now) else (false, live)
       .run
 
-/** Requests for, or referred from, a probe path (by default a root-level random-hex media file such as `/947870aad1.mkv`). */
-object Probe:
-  val pathName: DetectorName    = DetectorName("probe")
-  val refererName: DetectorName = DetectorName("referer-probe")
-  val pathReason: Reason        = Reason("probe")
-  val refererReason: Reason     = Reason("referer-probe")
-
-  private val randomMediaName = "^[0-9a-f]{8,}\\.(avi|flac|flv|mka|mkv|mov|mp3|mp4|mpeg|mpg|ogg|webm|webp|wmv)$".r
-
-  val randomMedia: Path => Boolean = path =>
-    path.segments.toList match
-      case List(segment) => randomMediaName.matches(segment.toLowerCase(Locale.ROOT))
-      case _             => false
-
-  def path(isProbe: Path => Boolean = randomMedia): Detector =
-    Detector.pure(pathName): (request, _) =>
-      Option.when(isProbe(request.path))(Verdict(Tier.Confirmed, pathReason))
-
-  def referer(isProbe: Path => Boolean = randomMedia): Detector =
-    Detector.pure(refererName): (request, _) =>
-      Option.when(request.header(Header.Referer).exists(r => isProbe(r.url.path)))(Verdict(Tier.Confirmed, refererReason))
-
 /**
  * A Chrome-family User-Agent whose client hints contradict it. Real Chrome
  * never sends a `sec-ch-ua` version different from its User-Agent's
