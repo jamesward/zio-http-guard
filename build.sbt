@@ -2,7 +2,7 @@ organization := "com.jamesward"
 
 name := "zio-http-guard"
 
-scalaVersion := "3.9.0"
+scalaVersion := "3.10.1"
 
 scalacOptions ++= Seq(
   // "-Yexplicit-nulls", // not sure where it went
@@ -18,7 +18,7 @@ libraryDependencies ++= Seq(
   "dev.zio" %% "zio"                 % zioVersion,
   "dev.zio" %% "zio-concurrent"      % zioVersion,
   "dev.zio" %% "zio-direct"          % "1.0.0-RC7",
-  "dev.zio" %% "zio-http"            % "3.11.6",
+  "dev.zio" %% "zio-http"            % "3.12.0",
   // Same version zio-mavencentral is built against: rezilience minor
   // releases aren't binary compatible.
   "nl.vroste" %% "rezilience"        % "0.10.6",
